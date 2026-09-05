@@ -1,0 +1,6 @@
+{
+  "name": "PDF Viewer",
+  "description": "目次自動生成、ページジャンプ、しおり機能、オフライン閲覧に対応したシンプルなPDFビューワー",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
