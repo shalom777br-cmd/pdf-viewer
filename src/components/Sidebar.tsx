@@ -35,10 +35,12 @@ interface SidebarProps {
   onOpenOfflineDoc: (id: string) => void;
   onRemoveOfflineDoc: (id: string) => void;
   storageUsage: StorageUsage;
+  onClose?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   isOpen,
+  onClose,
   activeTab,
   onChangeTab,
   toc,
@@ -60,8 +62,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [tocFilter, setTocFilter] = useState('');
   const [editingBookmarkId, setEditingBookmarkId] = useState<string | null>(null);
   const [editNoteText, setEditNoteText] = useState('');
-  const [newBookmarkNote, setNewBookmarkNote] = useState('');
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [targetPageInput, setTargetPageInput] = useState('');
+
+  const handleJump = (pageNum: number) => {
+    onJumpToPage(pageNum);
+    if (typeof window !== 'undefined' && window.innerWidth < 768 && onClose) {
+      onClose();
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -99,7 +107,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       return (
         <button
           key={item.id}
-          onClick={() => onJumpToPage(item.pageNumber)}
+          onClick={() => handleJump(item.pageNumber)}
           className={`w-full text-left transition-all flex items-center justify-between gap-2 cursor-pointer ${
             isActive
               ? 'px-3 py-2 bg-white font-semibold text-[#BC8F8F] shadow-2xs rounded-md border border-[#E8E1D9]'
@@ -120,7 +128,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   return (
-    <aside className="w-72 sm:w-80 shrink-0 bg-[#F8F5F0] border-r border-[#E8E1D9] flex flex-col h-[calc(100vh-56px)] select-none shadow-inner">
+    <>
+      {/* Mobile Backdrop */}
+      <div
+        onClick={onClose}
+        className="fixed inset-0 bg-black/30 z-40 md:hidden backdrop-blur-2xs"
+      />
+      <aside className="fixed md:static inset-y-0 left-0 z-50 w-72 sm:w-80 shrink-0 bg-[#F8F5F0] border-r border-[#E8E1D9] flex flex-col h-full md:h-[calc(100vh-56px)] select-none shadow-2xl md:shadow-inner">
+        {/* Mobile Header with Close Button */}
+        <div className="md:hidden flex items-center justify-between px-3 py-2 border-b border-[#E8E1D9] bg-[#EFEBE4]">
+          <span className="text-xs font-semibold text-[#4A3F35]">メニュー</span>
+          <button
+            onClick={onClose}
+            className="p-1 rounded text-[#6D5D50] hover:bg-[#E8E1D9] cursor-pointer"
+            title="閉じる"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       {/* Tab Switcher */}
       <div className="p-3 border-b border-[#E8E1D9] bg-[#F8F5F0]">
         <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-widest text-[#A09080]">
@@ -262,53 +287,67 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* 2. Bookmarks Tab */}
         {activeTab === 'bookmarks' && (
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-1">
               <span className="text-xs font-semibold text-[#4A3F35]">
                 しおり一覧 ({bookmarks.length})
               </span>
-              {!isCurrentPageBookmarked && (
-                <button
-                  onClick={() => setShowAddForm(true)}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md bg-[#BC8F8F] text-white hover:bg-[#AA7C7C] transition-colors cursor-pointer shadow-2xs"
-                >
-                  <Plus className="w-3 h-3" />
-                  <span>P.{currentPage} に挟む</span>
-                </button>
-              )}
+              <button
+                id="toggle-current-bookmark-btn"
+                onClick={() => {
+                  if (isCurrentPageBookmarked) {
+                    const bm = bookmarks.find((b) => b.pageNumber === currentPage);
+                    if (bm) onRemoveBookmark(bm.id);
+                  } else {
+                    onAddBookmark(currentPage);
+                  }
+                }}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md font-medium transition-all cursor-pointer shadow-2xs ${
+                  isCurrentPageBookmarked
+                    ? 'bg-[#E8E1D9] text-[#7A4E4E] hover:bg-rose-100 hover:text-rose-700'
+                    : 'bg-[#BC8F8F] text-white hover:bg-[#AA7C7C] active:scale-95'
+                }`}
+                title={isCurrentPageBookmarked ? `P.${currentPage} のしおりを外す` : `P.${currentPage} にしおりを挟む`}
+              >
+                <Bookmark className={`w-3.5 h-3.5 ${isCurrentPageBookmarked ? 'fill-current text-[#BC8F8F]' : ''}`} />
+                <span>{isCurrentPageBookmarked ? `P.${currentPage} 挟み中` : `+ P.${currentPage} に挟む`}</span>
+              </button>
             </div>
 
-            {showAddForm && !isCurrentPageBookmarked && (
-              <div className="p-2.5 rounded-md bg-white border border-[#E8E1D9] space-y-2 shadow-2xs">
-                <p className="text-xs font-semibold text-[#2A241F]">
-                  P.{currentPage} にしおりを追加
-                </p>
-                <input
-                  type="text"
-                  placeholder="メモを入力（任意）"
-                  value={newBookmarkNote}
-                  onChange={(e) => setNewBookmarkNote(e.target.value)}
-                  className="w-full px-2 py-1 text-xs rounded border border-[#E8E1D9] bg-[#F8F5F0] text-[#4A3F35] outline-none focus:border-[#BC8F8F]"
-                />
-                <div className="flex justify-end gap-1.5">
-                  <button
-                    onClick={() => setShowAddForm(false)}
-                    className="px-2 py-1 text-[11px] rounded text-[#A09080] hover:bg-[#E8E1D9] transition-colors cursor-pointer"
-                  >
-                    キャンセル
-                  </button>
-                  <button
-                    onClick={() => {
-                      onAddBookmark(currentPage, newBookmarkNote);
-                      setNewBookmarkNote('');
-                      setShowAddForm(false);
-                    }}
-                    className="px-2.5 py-1 text-[11px] rounded bg-[#BC8F8F] text-white hover:bg-[#AA7C7C] font-medium transition-colors cursor-pointer shadow-2xs"
-                  >
-                    保存
-                  </button>
-                </div>
-              </div>
-            )}
+            {/* Quick add bookmark by specifying page */}
+            <div className="flex items-center gap-2 p-2 rounded-md bg-white border border-[#E8E1D9] text-xs shadow-2xs">
+              <span className="text-[#6D5D50] text-[11px] font-medium shrink-0">ページ指定:</span>
+              <input
+                type="number"
+                min={1}
+                max={pageCount || 1}
+                placeholder={`1〜${pageCount}`}
+                value={targetPageInput}
+                onChange={(e) => setTargetPageInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const p = parseInt(targetPageInput, 10);
+                    if (!isNaN(p) && p >= 1 && p <= pageCount) {
+                      onAddBookmark(p);
+                      setTargetPageInput('');
+                    }
+                  }
+                }}
+                className="w-20 px-2 py-1 text-xs rounded border border-[#E8E1D9] bg-[#F8F5F0] text-[#2A241F] outline-none focus:border-[#BC8F8F]"
+              />
+              <button
+                onClick={() => {
+                  const p = parseInt(targetPageInput, 10);
+                  if (!isNaN(p) && p >= 1 && p <= pageCount) {
+                    onAddBookmark(p);
+                    setTargetPageInput('');
+                  }
+                }}
+                disabled={!targetPageInput}
+                className="flex-1 px-2.5 py-1 text-xs rounded bg-[#BC8F8F] text-white hover:bg-[#AA7C7C] font-medium transition-colors cursor-pointer disabled:opacity-40 disabled:pointer-events-none shadow-2xs text-center"
+              >
+                挟む
+              </button>
+            </div>
 
             {bookmarks.length === 0 ? (
               <div className="py-10 text-center text-xs text-[#A09080] bg-white rounded-md border border-dashed border-[#E8E1D9] p-4">
@@ -331,7 +370,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   >
                     <div className="flex items-center justify-between gap-1">
                       <button
-                        onClick={() => onJumpToPage(bm.pageNumber)}
+                        onClick={() => handleJump(bm.pageNumber)}
                         className="font-semibold text-xs text-[#2A241F] hover:text-[#BC8F8F] flex items-center gap-1.5 cursor-pointer text-left flex-1 truncate"
                       >
                         <Bookmark className="w-3.5 h-3.5 text-[#BC8F8F] shrink-0 fill-current" />
@@ -398,37 +437,66 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* 3. Thumbnails Tab */}
         {activeTab === 'thumbnails' && (
           <div className="grid grid-cols-2 gap-2.5">
-            {Array.from({ length: pageCount }, (_, i) => i + 1).map((pageNum) => (
-              <button
-                key={pageNum}
-                onClick={() => onJumpToPage(pageNum)}
-                className={`group flex flex-col items-center p-1.5 rounded-md border transition-all cursor-pointer ${
-                  pageNum === currentPage
-                    ? 'bg-white border-[#BC8F8F] ring-2 ring-[#BC8F8F]/30 shadow-xs'
-                    : 'bg-white border-[#E8E1D9] hover:border-[#BC8F8F]/50 hover:shadow-2xs'
-                }`}
-              >
-                <div className="w-full aspect-[1/1.414] bg-[#F8F5F0] rounded overflow-hidden flex items-center justify-center border border-[#E8E1D9]">
-                  {thumbnails[pageNum] ? (
-                    <img
-                      src={thumbnails[pageNum]}
-                      alt={`Page ${pageNum}`}
-                      className="w-full h-full object-contain"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <FileText className="w-6 h-6 text-[#A09080]/50" />
-                  )}
-                </div>
-                <span
-                  className={`mt-1.5 text-[11px] font-medium ${
-                    pageNum === currentPage ? 'text-[#BC8F8F] font-bold' : 'text-[#6D5D50]'
+            {Array.from({ length: pageCount }, (_, i) => i + 1).map((pageNum) => {
+              const bm = bookmarks.find((b) => b.pageNumber === pageNum);
+              return (
+                <div
+                  key={pageNum}
+                  className={`group relative flex flex-col items-center p-1.5 rounded-md border transition-all ${
+                    pageNum === currentPage
+                      ? 'bg-white border-[#BC8F8F] ring-2 ring-[#BC8F8F]/30 shadow-xs'
+                      : 'bg-white border-[#E8E1D9] hover:border-[#BC8F8F]/50 hover:shadow-2xs'
                   }`}
                 >
-                  {pageNum}
-                </span>
-              </button>
-            ))}
+                  {/* Bookmark quick-action button on thumbnail */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (bm) {
+                        onRemoveBookmark(bm.id);
+                      } else {
+                        onAddBookmark(pageNum);
+                      }
+                    }}
+                    className={`absolute top-2.5 right-2.5 z-10 p-1 rounded-md transition-all cursor-pointer ${
+                      bm
+                        ? 'bg-white/95 text-[#BC8F8F] shadow-xs hover:bg-rose-50 hover:text-rose-600'
+                        : 'bg-white/80 text-[#A09080] opacity-0 group-hover:opacity-100 hover:text-[#BC8F8F] hover:bg-white shadow-xs'
+                    }`}
+                    title={bm ? `P.${pageNum} のしおりを外す` : `P.${pageNum} にしおりを挟む`}
+                  >
+                    <Bookmark className={`w-3.5 h-3.5 ${bm ? 'fill-current text-[#BC8F8F]' : ''}`} />
+                  </button>
+
+                  <button
+                    onClick={() => handleJump(pageNum)}
+                    className="w-full flex flex-col items-center cursor-pointer"
+                  >
+                    <div className="w-full aspect-[1/1.414] bg-[#F8F5F0] rounded overflow-hidden flex items-center justify-center border border-[#E8E1D9]">
+                      {thumbnails[pageNum] ? (
+                        <img
+                          src={thumbnails[pageNum]}
+                          alt={`Page ${pageNum}`}
+                          className="w-full h-full object-contain"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <FileText className="w-6 h-6 text-[#A09080]/50" />
+                      )}
+                    </div>
+                    <span
+                      className={`mt-1.5 text-[11px] font-medium flex items-center gap-1 ${
+                        pageNum === currentPage ? 'text-[#BC8F8F] font-bold' : 'text-[#6D5D50]'
+                      }`}
+                    >
+                      <span>{pageNum}</span>
+                      {bm && <span className="w-1.5 h-1.5 rounded-full bg-[#BC8F8F]" />}
+                    </span>
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -499,5 +567,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         Table of contents automatically generated from document metadata.
       </div>
     </aside>
+    </>
   );
 };

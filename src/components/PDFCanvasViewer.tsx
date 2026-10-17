@@ -35,6 +35,7 @@ export const PDFCanvasViewer: React.FC<PDFCanvasViewerProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [isRendering, setIsRendering] = useState<boolean>(false);
   const [pageSize, setPageSize] = useState<{ width: number; height: number } | null>(null);
+  const currentRenderTaskRef = useRef<any>(null);
   const [isDraggingOver, setIsDraggingOver] = useState<boolean>(false);
 
   // Render active page onto canvas
@@ -43,6 +44,15 @@ export const PDFCanvasViewer: React.FC<PDFCanvasViewerProps> = ({
 
     async function render() {
       if (!pdfDoc || !canvasRef.current) return;
+
+      // Cancel any ongoing render task on this canvas before starting a new one
+      if (currentRenderTaskRef.current) {
+        try {
+          currentRenderTaskRef.current.cancel();
+        } catch {}
+        currentRenderTaskRef.current = null;
+      }
+
       setIsRendering(true);
 
       try {
@@ -51,7 +61,10 @@ export const PDFCanvasViewer: React.FC<PDFCanvasViewerProps> = ({
           currentPage,
           canvasRef.current,
           scale,
-          rotation
+          rotation,
+          (task) => {
+            currentRenderTaskRef.current = task;
+          }
         );
 
         if (!isCancelled) {
@@ -64,6 +77,7 @@ export const PDFCanvasViewer: React.FC<PDFCanvasViewerProps> = ({
       } finally {
         if (!isCancelled) {
           setIsRendering(false);
+          currentRenderTaskRef.current = null;
         }
       }
     }
@@ -72,6 +86,12 @@ export const PDFCanvasViewer: React.FC<PDFCanvasViewerProps> = ({
 
     return () => {
       isCancelled = true;
+      if (currentRenderTaskRef.current) {
+        try {
+          currentRenderTaskRef.current.cancel();
+        } catch {}
+        currentRenderTaskRef.current = null;
+      }
     };
   }, [pdfDoc, currentPage, scale, rotation]);
 
@@ -137,7 +157,7 @@ export const PDFCanvasViewer: React.FC<PDFCanvasViewerProps> = ({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className="flex-1 relative overflow-auto bg-[#FDFBF7] flex flex-col items-center justify-start p-4 sm:p-6 min-h-0 select-text"
+      className="flex-1 relative overflow-auto bg-[#FDFBF7] flex flex-col items-center justify-start p-0 min-h-0 select-text"
     >
       {/* Drag & Drop Overlay */}
       {isDraggingOver && (
@@ -158,20 +178,57 @@ export const PDFCanvasViewer: React.FC<PDFCanvasViewerProps> = ({
         </div>
       )}
 
-      {/* Error State */}
-      {!isLoading && loadingError && (
+      {/* Non-fatal warning banner if document is already loaded */}
+      {!isLoading && loadingError && pdfDoc && (
+        <div className="mb-4 px-4 py-2 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-md shadow-xs flex items-center justify-between gap-3 max-w-lg w-full z-20">
+          <div className="flex items-center gap-2 truncate">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+            <span className="truncate">{loadingError}</span>
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="text-[11px] underline font-medium hover:text-rose-950 shrink-0 cursor-pointer"
+          >
+            再読み込み
+          </button>
+        </div>
+      )}
+
+      {/* Fatal Error State (when document could not be opened at all) */}
+      {!isLoading && loadingError && !pdfDoc && (
         <div className="my-auto max-w-md w-full p-6 rounded-lg bg-white border border-rose-200 shadow-xs text-center space-y-3">
           <div className="w-10 h-10 rounded-md bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
             <AlertCircle className="w-5 h-5" />
           </div>
           <h3 className="text-sm font-bold text-[#2A241F]">PDFの読み込みに失敗しました</h3>
           <p className="text-xs text-[#A09080]">{loadingError}</p>
-          <button
-            onClick={onLoadSample}
-            className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-[#BC8F8F] text-white text-xs font-medium hover:bg-[#AA7C7C] transition-colors cursor-pointer shadow-2xs"
-          >
-            サンプルPDFを開く
-          </button>
+          <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
+            <label
+              htmlFor="error-retry-file-input"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md bg-[#BC8F8F] text-white text-xs font-medium hover:bg-[#AA7C7C] transition-colors cursor-pointer shadow-2xs"
+            >
+              <FileUp className="w-3.5 h-3.5" />
+              <span>ファイルを選択し直す</span>
+            </label>
+            <input
+              id="error-retry-file-input"
+              type="file"
+              accept="application/pdf"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) onOpenFile(file);
+                e.target.value = '';
+              }}
+              className="hidden"
+            />
+            <button
+              onClick={onLoadSample}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border border-[#E8E1D9] bg-[#F8F5F0] hover:bg-[#E8E1D9] text-[#4A3F35] text-xs font-medium transition-colors cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-[#BC8F8F]" />
+              <span>サンプルPDFを開く</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -245,12 +302,13 @@ export const PDFCanvasViewer: React.FC<PDFCanvasViewerProps> = ({
 
       {/* Active PDF Page Sheet */}
       {pdfDoc && (
-        <div className="relative mb-20 transition-transform duration-100 ease-out flex justify-center">
+        <div className="relative pb-14 pt-0 w-full flex justify-center">
           {/* Main Paper Container */}
           <div
-            className="relative bg-white shadow-md rounded-xs border border-[#E8E1D9] transition-shadow"
+            className="relative bg-white shadow-none sm:shadow-xs border-0 sm:border border-[#E8E1D9] transition-shadow max-w-full flex justify-center"
             style={{
-              width: pageSize ? `${pageSize.width}px` : 'auto',
+              width: pageSize ? `${pageSize.width}px` : '100%',
+              maxWidth: '100%',
               minHeight: pageSize ? `${pageSize.height}px` : '400px',
             }}
           >
@@ -258,15 +316,15 @@ export const PDFCanvasViewer: React.FC<PDFCanvasViewerProps> = ({
             {isBookmarked && (
               <button
                 onClick={onToggleBookmark}
-                className="absolute -top-1 right-6 z-20 transition transform hover:-translate-y-0.5 cursor-pointer"
+                className="absolute top-0 right-2 sm:right-4 z-20 transition transform hover:-translate-y-0.5 cursor-pointer"
                 title="このページにはしおりが挟まれています（クリックで解除）"
               >
                 <div className="relative flex flex-col items-center">
-                  <div className="w-6 h-10 bg-[#BC8F8F] shadow-xs flex items-center justify-center text-white">
-                    <Bookmark className="w-3.5 h-3.5 fill-current" />
+                  <div className="w-5 sm:w-6 h-8 sm:h-10 bg-[#BC8F8F] shadow-xs flex items-center justify-center text-white">
+                    <Bookmark className="w-3 sm:w-3.5 h-3 sm:h-3.5 fill-current" />
                   </div>
                   {/* Ribbon V cut */}
-                  <div className="w-0 h-0 border-l-[12px] border-l-[#BC8F8F] border-r-[12px] border-r-[#BC8F8F] border-b-[8px] border-b-transparent" />
+                  <div className="w-0 h-0 border-l-[10px] sm:border-l-[12px] border-l-[#BC8F8F] border-r-[10px] sm:border-r-[12px] border-r-[#BC8F8F] border-b-[6px] sm:border-b-[8px] border-b-transparent" />
                 </div>
               </button>
             )}
@@ -279,7 +337,11 @@ export const PDFCanvasViewer: React.FC<PDFCanvasViewerProps> = ({
             )}
 
             {/* Canvas Element */}
-            <canvas ref={canvasRef} className="block mx-auto max-w-full h-auto" />
+            <canvas
+              ref={canvasRef}
+              className="block mx-auto max-w-full h-auto"
+              style={{ maxWidth: '100%' }}
+            />
           </div>
         </div>
       )}

@@ -22,7 +22,9 @@ export function App() {
   const [isGeneratingTOC, setIsGeneratingTOC] = useState<boolean>(false);
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
   const [thumbnails, setThumbnails] = useState<Record<number, string>>({});
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(
+    typeof window !== 'undefined' ? window.innerWidth >= 1024 : false
+  );
   const [activeTab, setActiveTab] = useState<'toc' | 'bookmarks' | 'thumbnails' | 'offline'>('toc');
   const [isOfflineModalOpen, setIsOfflineModalOpen] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -106,12 +108,26 @@ export function App() {
 
         setPdfDoc(doc);
         setCurrentMeta(meta);
-        setFileBuffer(buffer);
+        setFileBuffer(buffer.slice(0));
         setCurrentPage(Math.min(pageToOpen, doc.numPages));
         setToc(extractedTOC);
         setBookmarks(cachedBookmarks);
         setIsOfflineCached(isOffline);
         setRotation(0);
+        setLoadingError(null);
+
+        // Automatically calculate scale to fit screen width with minimal margins
+        try {
+          const firstPage = await doc.getPage(Math.min(pageToOpen, doc.numPages));
+          const vp = firstPage.getViewport({ scale: 1.0, rotation: 0 });
+          const availWidth = typeof window !== 'undefined'
+            ? (window.innerWidth < 768 ? window.innerWidth : (window.innerWidth >= 1024 ? window.innerWidth - 320 : window.innerWidth))
+            : 600;
+          const fitScale = Math.max(0.4, Math.min(3.0, Math.round((availWidth / vp.width) * 100) / 100));
+          setScale(fitScale);
+        } catch {
+          setScale(typeof window !== 'undefined' && window.innerWidth < 768 ? 0.95 : 1.15);
+        }
 
         // Pre-generate thumbnail for page 1
         try {
@@ -131,6 +147,11 @@ export function App() {
             }
           }
         }, 100);
+
+        // Remember last opened document
+        try {
+          localStorage.setItem('pdf_last_opened_doc_id', stableId);
+        } catch {}
 
         refreshOfflineDocs();
       } catch (err: any) {
@@ -157,46 +178,107 @@ export function App() {
     }
   }, [loadPDF]);
 
-  // Initial Load: check if previously stored docs exist, else load sample
+  // Initial Load: check if previously opened doc exists in offline store, else fallback to latest or sample
   useEffect(() => {
     async function init() {
       try {
+        const lastId = typeof localStorage !== 'undefined' ? localStorage.getItem('pdf_last_opened_doc_id') : null;
+        if (lastId) {
+          try {
+            const stored = await offlineStorage.getDocument(lastId);
+            if (stored && stored.fileBuffer && stored.fileBuffer.byteLength > 0) {
+              await loadPDF(
+                stored.fileBuffer,
+                stored.metadata.title,
+                stored.metadata.fileName,
+                stored.metadata.id,
+                stored.metadata.currentPage || 1
+              );
+              return;
+            }
+          } catch (storageErr) {
+            console.warn('Could not restore last opened document from storage:', storageErr);
+            try {
+              localStorage.removeItem('pdf_last_opened_doc_id');
+            } catch {}
+          }
+        }
+
         const docs = await offlineStorage.getAllDocuments();
         if (docs.length > 0) {
-          const first = docs[0];
-          const stored = await offlineStorage.getDocument(first.id);
-          if (stored) {
-            await loadPDF(
-              stored.fileBuffer,
-              stored.metadata.title,
-              stored.metadata.fileName,
-              stored.metadata.id,
-              stored.metadata.currentPage || 1
-            );
-            return;
+          for (const docMeta of docs) {
+            try {
+              const stored = await offlineStorage.getDocument(docMeta.id);
+              if (stored && stored.fileBuffer && stored.fileBuffer.byteLength > 0) {
+                await loadPDF(
+                  stored.fileBuffer,
+                  stored.metadata.title,
+                  stored.metadata.fileName,
+                  stored.metadata.id,
+                  stored.metadata.currentPage || 1
+                );
+                return;
+              }
+            } catch (docErr) {
+              console.warn('Error reading stored document:', docErr);
+            }
           }
         }
         loadSamplePDF();
       } catch (e) {
-        console.warn('Initial load error:', e);
+        console.warn('Initial load fallback error:', e);
         loadSamplePDF();
       }
     }
     init();
   }, [loadPDF, loadSamplePDF]);
 
-  // Open file from local input / drag-and-drop
+  // Open file from local input / drag-and-drop & automatically persist to offline IndexedDB
   const handleOpenFile = useCallback(
     async (file: File) => {
       try {
-        const buffer = await file.arrayBuffer();
-        const docId = `file_${file.name.replace(/[^a-zA-Z0-9]/g, '_')}_${buffer.byteLength}`;
-        await loadPDF(buffer, file.name.replace(/\.pdf$/i, ''), file.name, docId, 1);
+        setIsLoading(true);
+        setLoadingError(null);
+
+        const rawBuffer = await file.arrayBuffer();
+        // Clone buffer to ensure original is never detached or mutated
+        const workingBuffer = rawBuffer.slice(0);
+        const storageBuffer = rawBuffer.slice(0);
+
+        const docId = `file_${file.name.replace(/[^a-zA-Z0-9]/g, '_')}_${workingBuffer.byteLength}`;
+        const cleanTitle = file.name.replace(/\.pdf$/i, '');
+
+        // 1. Load and display PDF directly
+        await loadPDF(workingBuffer, cleanTitle, file.name, docId, 1);
+        setLoadingError(null);
+
+        // 2. Safely attempt to persist to IndexedDB in the background without throwing error to UI
+        try {
+          const autoMeta: PDFDocumentMetadata = {
+            id: docId,
+            title: cleanTitle,
+            fileName: file.name,
+            fileSize: storageBuffer.byteLength,
+            pageCount: 1,
+            lastOpenedAt: Date.now(),
+            isOfflineAvailable: true,
+            currentPage: 1,
+            zoomScale: 1.15,
+          };
+          await offlineStorage.saveDocument(autoMeta, storageBuffer);
+          setIsOfflineCached(true);
+          refreshOfflineDocs();
+        } catch (storageErr) {
+          console.warn('Auto-save to offline library failed (storage quota or detached):', storageErr);
+        }
       } catch (e: any) {
-        setLoadingError('ファイルの読み込みに失敗しました: ' + e.message);
+        console.error('Failed to open PDF file:', e);
+        setLoadingError('ファイルの読み込みに失敗しました: ' + (e?.message || '不明なエラー'));
+      } finally {
+        setIsLoading(false);
       }
     },
-    [loadPDF]
+    [loadPDF, refreshOfflineDocs]
   );
 
   // Open document from offline storage
@@ -321,6 +403,9 @@ export function App() {
       if (!pdfDoc) return;
       const target = Math.max(1, Math.min(pdfDoc.numPages, page));
       setCurrentPage(target);
+      if (typeof window !== 'undefined' && window.innerWidth < 768) {
+        setIsSidebarOpen(false);
+      }
       if (currentMeta) {
         offlineStorage.updateReadingPosition(currentMeta.id, target, scale);
       }
@@ -330,10 +415,41 @@ export function App() {
 
   // Zoom controls
   const handleZoomIn = () => setScale((s) => Math.min(3.0, Math.round((s + 0.15) * 100) / 100));
-  const handleZoomOut = () => setScale((s) => Math.max(0.5, Math.round((s - 0.15) * 100) / 100));
+  const handleZoomOut = () => setScale((s) => Math.max(0.4, Math.round((s - 0.15) * 100) / 100));
   const handleZoomReset = () => setScale(1.0);
-  const handleFitWidth = () => setScale(1.35);
-  const handleFitPage = () => setScale(0.95);
+
+  const handleFitWidth = useCallback(async () => {
+    if (!pdfDoc) return;
+    try {
+      const page = await pdfDoc.getPage(currentPage);
+      const vp = page.getViewport({ scale: 1.0, rotation });
+      const availWidth = typeof window !== 'undefined'
+        ? (window.innerWidth < 768 ? window.innerWidth : (isSidebarOpen ? window.innerWidth - 320 : window.innerWidth))
+        : 600;
+      // Calculate scale to fill width with 0 padding
+      const newScale = Math.max(0.4, Math.min(3.0, Math.round((availWidth / vp.width) * 100) / 100));
+      setScale(newScale);
+    } catch {
+      setScale(1.2);
+    }
+  }, [pdfDoc, currentPage, rotation, isSidebarOpen]);
+
+  const handleFitPage = useCallback(async () => {
+    if (!pdfDoc) return;
+    try {
+      const page = await pdfDoc.getPage(currentPage);
+      const vp = page.getViewport({ scale: 1.0, rotation });
+      const availWidth = typeof window !== 'undefined'
+        ? (window.innerWidth < 768 ? window.innerWidth : (isSidebarOpen ? window.innerWidth - 320 : window.innerWidth))
+        : 600;
+      const availHeight = (typeof window !== 'undefined' ? window.innerHeight : 800) - 56 - 54;
+      const newScale = Math.max(0.4, Math.min(3.0, Math.round(Math.min(availWidth / vp.width, availHeight / vp.height) * 100) / 100));
+      setScale(newScale);
+    } catch {
+      setScale(0.9);
+    }
+  }, [pdfDoc, currentPage, rotation, isSidebarOpen]);
+
   const handleRotate = () => setRotation((r) => (r + 90) % 360);
 
   // Search in Document
@@ -406,6 +522,7 @@ export function App() {
         {/* Left Sidebar */}
         <Sidebar
           isOpen={isSidebarOpen}
+          onClose={() => setIsSidebarOpen(false)}
           activeTab={activeTab}
           onChangeTab={setActiveTab}
           toc={toc}

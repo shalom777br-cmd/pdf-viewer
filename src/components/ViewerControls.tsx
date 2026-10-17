@@ -43,6 +43,31 @@ export const ViewerControls: React.FC<ViewerControlsProps> = ({
   onToggleBookmark,
 }) => {
   const [pageInput, setPageInput] = useState<string>(currentPage.toString());
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(
+    typeof document !== 'undefined' && !!document.fullscreenElement
+  );
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (e) {
+      console.warn('Fullscreen error:', e);
+    }
+  };
 
   useEffect(() => {
     setPageInput(currentPage.toString());
@@ -66,7 +91,7 @@ export const ViewerControls: React.FC<ViewerControlsProps> = ({
   };
 
   return (
-    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 sm:gap-2 bg-white/95 backdrop-blur-xs px-3 py-2 rounded-lg border border-[#E8E1D9] shadow-lg text-xs select-none">
+    <div className="absolute bottom-2 sm:bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 sm:gap-2 bg-white/95 backdrop-blur-xs px-2 py-1.5 sm:px-3 sm:py-2 rounded-lg border border-[#E8E1D9] shadow-md text-xs select-none max-w-[96vw] overflow-x-auto">
       {/* Page Navigation Stepper */}
       <div className="flex items-center gap-1">
         <button
@@ -173,7 +198,7 @@ export const ViewerControls: React.FC<ViewerControlsProps> = ({
 
       <div className="h-4 w-px bg-[#E8E1D9] mx-0.5" />
 
-      {/* Rotate & Bookmark */}
+      {/* Rotate, Bookmark & Fullscreen */}
       <div className="flex items-center gap-1">
         <button
           id="rotate-btn"
@@ -195,6 +220,21 @@ export const ViewerControls: React.FC<ViewerControlsProps> = ({
           title={isCurrentPageBookmarked ? 'このページのしおりを削除' : 'このページにしおりを挟む'}
         >
           <Bookmark className={`w-3.5 h-3.5 ${isCurrentPageBookmarked ? 'fill-current' : ''}`} />
+        </button>
+
+        <div className="h-4 w-px bg-[#E8E1D9] mx-0.5" />
+
+        <button
+          id="fullscreen-toggle-btn"
+          onClick={toggleFullscreen}
+          className="p-1 rounded text-[#6D5D50] hover:bg-[#F8F5F0] hover:text-[#2A241F] transition-colors cursor-pointer"
+          title={isFullscreen ? 'フルスクリーンを解除 (Esc)' : 'フルスクリーン表示'}
+        >
+          {isFullscreen ? (
+            <Minimize2 className="w-3.5 h-3.5" />
+          ) : (
+            <Maximize2 className="w-3.5 h-3.5" />
+          )}
         </button>
       </div>
     </div>

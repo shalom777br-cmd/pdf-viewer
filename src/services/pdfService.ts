@@ -14,7 +14,18 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 ).toString();
 
 export class PDFService {
-  static async loadDocument(source: string | ArrayBuffer): Promise<pdfjsLib.PDFDocumentProxy> {
+  static async loadDocument(source: string | ArrayBuffer | Uint8Array): Promise<pdfjsLib.PDFDocumentProxy> {
+    let dataPayload: Uint8Array | undefined;
+    if (typeof source !== 'string') {
+      if (source instanceof ArrayBuffer) {
+        dataPayload = new Uint8Array(source.slice(0));
+      } else if (ArrayBuffer.isView(source)) {
+        dataPayload = new Uint8Array(source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength));
+      } else {
+        dataPayload = new Uint8Array(source);
+      }
+    }
+
     const loadingTask = pdfjsLib.getDocument(
       typeof source === 'string'
         ? {
@@ -24,7 +35,7 @@ export class PDFService {
             standardFontDataUrl: '/standard_fonts/',
           }
         : {
-            data: source,
+            data: dataPayload,
             cMapUrl: '/cmaps/',
             cMapPacked: true,
             standardFontDataUrl: '/standard_fonts/',
@@ -243,7 +254,8 @@ export class PDFService {
     pageNumber: number,
     canvas: HTMLCanvasElement,
     scale: number = 1.0,
-    rotation: number = 0
+    rotation: number = 0,
+    onRenderTaskCreated?: (task: any) => void
   ): Promise<{ width: number; height: number }> {
     const page = await pdfDoc.getPage(pageNumber);
     const viewport = page.getViewport({ scale, rotation });
@@ -265,8 +277,21 @@ export class PDFService {
       viewport: viewport,
     };
 
-    await page.render(renderContext).promise;
-    ctx.restore();
+    const renderTask = page.render(renderContext);
+    if (onRenderTaskCreated) {
+      onRenderTaskCreated(renderTask);
+    }
+
+    try {
+      await renderTask.promise;
+    } catch (err: any) {
+      if (err?.name === 'RenderingCancelledException') {
+        return { width: viewport.width, height: viewport.height };
+      }
+      throw err;
+    } finally {
+      ctx.restore();
+    }
 
     return { width: viewport.width, height: viewport.height };
   }

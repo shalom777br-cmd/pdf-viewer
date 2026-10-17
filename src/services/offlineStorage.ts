@@ -50,27 +50,41 @@ export class OfflineStorageService {
     toc?: TOCItem[]
   ): Promise<void> {
     const db = await this.getDB();
+
+    // Safely copy buffer to prevent detached buffer cloning errors
+    let safeBuffer: ArrayBuffer;
+    try {
+      safeBuffer = fileBuffer.slice(0);
+    } catch {
+      safeBuffer = fileBuffer;
+    }
+
     const docRecord: StoredDocumentRecord = {
       metadata: {
         ...metadata,
         isOfflineAvailable: true,
         offlineSavedAt: Date.now(),
       },
-      fileBuffer,
+      fileBuffer: safeBuffer,
       savedAt: Date.now(),
     };
 
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(['documents', 'bookmarks', 'toc_cache'], 'readwrite');
-      tx.objectStore('documents').put(docRecord);
-      if (bookmarks) {
-        tx.objectStore('bookmarks').put({ documentId: metadata.id, items: bookmarks });
+      try {
+        const tx = db.transaction(['documents', 'bookmarks', 'toc_cache'], 'readwrite');
+        tx.objectStore('documents').put(docRecord);
+        if (bookmarks) {
+          tx.objectStore('bookmarks').put({ documentId: metadata.id, items: bookmarks });
+        }
+        if (toc) {
+          tx.objectStore('toc_cache').put({ documentId: metadata.id, items: toc });
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error('Transaction failed'));
+        tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+      } catch (err) {
+        reject(err);
       }
-      if (toc) {
-        tx.objectStore('toc_cache').put({ documentId: metadata.id, items: toc });
-      }
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
     });
   }
 

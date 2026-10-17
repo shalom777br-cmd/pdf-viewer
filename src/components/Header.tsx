@@ -83,7 +83,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <nav className="h-14 border-b border-[#E8E1D9] flex items-center justify-between px-3 sm:px-6 bg-[#F8F5F0] select-none shrink-0 z-40">
+    <nav className="h-11 sm:h-14 border-b border-[#E8E1D9] flex items-center justify-between px-2 sm:px-6 bg-[#F8F5F0] select-none shrink-0 z-40">
       <input
         type="file"
         ref={fileInputRef}
